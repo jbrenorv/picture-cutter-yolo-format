@@ -2,6 +2,7 @@ from PIL import Image
 from shapely.geometry import Polygon
 import pandas as pd
 import argparse
+import shutil
 import os
 
 
@@ -42,11 +43,10 @@ def get_cropped_image_and_txt_path(image_path, input_path, output_path, replace)
     split_image_name = image_name.split('.')
     split_txt_name = txt_name.split('.')
 
-    return (
-        os.path.join(input_path,
-                     '.'.join(split_image_name[:-1]) + '_cropped.' + split_image_name[-1]),
-        os.path.join(input_path,
-                     '.'.join(split_txt_name[:-1]) + '_cropped.' + split_txt_name[-1]),)
+    return (os.path.join(input_path,
+                         '.'.join(split_image_name[:-1]) + '_cropped.' + split_image_name[-1]),
+            os.path.join(input_path,
+                         '.'.join(split_txt_name[:-1]) + '_cropped.' + split_txt_name[-1]),)
 
 
 def cut(left_x, top_y, right_x, bottom_y, input_path, output_path=None, replace=False):
@@ -64,18 +64,36 @@ def cut(left_x, top_y, right_x, bottom_y, input_path, output_path=None, replace=
         - 'replace' : Se as imagens devem ser substituidas. Usado apenas se output_path não é definido
     '''
 
-    paths = [os.path.join(input_path, f)
-             for f in os.listdir(input_path)]
+    paths = [f for f in os.listdir(input_path)]
 
-    images_paths = [i for i in paths if i.endswith((
-        '.JPG', '.jpg', '.jpeg', '.JPEG',))]
+    if output_path:
+        if not os.path.exists(output_path):
+            os.mkdir(output_path)
 
-    if len(images_paths) != \
-            len([t for t in paths if t.endswith('.txt')]):
-        print("Quantidade de TXTs é diferente da quantidade de imagens.")
-        return
+        classes_file_name = "classes.txt"
+        if classes_file_name in paths:
+            paths.remove(classes_file_name)
+            shutil.copyfile(os.path.join(input_path, classes_file_name),
+                            os.path.join(output_path, classes_file_name))
+
+    # if len(images_paths) != \
+    #         len([t for t in paths if t.endswith('.txt')]):
+    #     print("Quantidade de TXTs é diferente da quantidade de imagens.")
+    #     return
+    images_paths = [os.path.join(input_path, i)
+                    for i in paths
+                    if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
 
     for image_path in images_paths:
+        txt_path = get_txt_path(image_path, input_path)
+
+        try:
+            labels = pd.read_csv(txt_path, sep=' ',
+                                 names=['class', 'x', 'y', 'w', 'h'])
+        except:
+            print(f"(Aviso): Nao foi possivel abrir {txt_path}")
+            continue
+
         image = Image.open(image_path)
 
         width, height = image.size
@@ -92,22 +110,17 @@ def cut(left_x, top_y, right_x, bottom_y, input_path, output_path=None, replace=
         cropped_image_path, new_txt_path = get_cropped_image_and_txt_path(
             image_path, input_path, output_path, replace)
 
-        txt_path = get_txt_path(image_path, input_path)
-        labels = pd.read_csv(txt_path, sep=' ', names=[
-            'class', 'x1', 'y1', 'w', 'h'])
-
-        # we need to rescale coordinates from 0-1 to real image height and width
-        labels[['x1', 'w']] = labels[['x1', 'w']] * width
-        labels[['y1', 'h']] = labels[['y1', 'h']] * height
+        # reescalando valores
+        labels[['x', 'w']] = labels[['x', 'w']] * width
+        labels[['y', 'h']] = labels[['y', 'h']] * height
 
         boxes = []
 
-        # convert bounding boxes to shapely polygons.
         for row in labels.iterrows():
-            x1 = row[1]['x1'] - row[1]['w']/2
-            y1 = row[1]['y1'] - row[1]['h']/2
-            x2 = row[1]['x1'] + row[1]['w']/2
-            y2 = row[1]['y1'] + row[1]['h']/2
+            x1 = row[1]['x'] - row[1]['w']/2
+            y1 = row[1]['y'] - row[1]['h']/2
+            x2 = row[1]['x'] + row[1]['w']/2
+            y2 = row[1]['y'] + row[1]['h']/2
 
             boxes.append((int(row[1]['class']), Polygon(
                 [(x1, y1), (x2, y1), (x2, y2), (x1, y2)])))
@@ -121,17 +134,17 @@ def cut(left_x, top_y, right_x, bottom_y, input_path, output_path=None, replace=
                 inter = cropped_image_pol.intersection(box[1])
                 new_box = inter.envelope
 
-                # get central point for the new bounding box
+                # obtendo o novo centro do bounding box
                 centre = new_box.centroid
 
-                # get coordinates of polygon vertices
+                # obtendo as coordenadas dos vertices do poligono
                 x, y = new_box.exterior.coords.xy
 
-                # get bounding box width and height normalized to slice size
+                # YOLO normalizacao para a nova largura e altura
                 new_width = (max(x) - min(x)) / cropped_image_width
                 new_height = (max(y) - min(y)) / cropped_image_height
 
-                # we have to normalize central x and invert y for yolo format
+                # YOLO normalizacao para as coordenadas do novo centro
                 new_x = (centre.coords.xy[0][0] - left_x) / cropped_image_width
                 new_y = (centre.coords.xy[1][0] - top_y) / cropped_image_height
 
@@ -139,10 +152,10 @@ def cut(left_x, top_y, right_x, bottom_y, input_path, output_path=None, replace=
                     [box[0], new_x, new_y, new_width, new_height])
 
         if len(txt_rows) > 0:
-            slice_df = pd.DataFrame(txt_rows, columns=[
-                'class', 'x1', 'y1', 'w', 'h'])
-            slice_df.to_csv(new_txt_path, sep=' ',
-                            index=False, header=False, float_format='%.6f')
+            txts_df = pd.DataFrame(txt_rows,
+                                   columns=['class', 'x', 'y', 'w', 'h'])
+            txts_df.to_csv(new_txt_path, sep=' ', index=False,
+                           header=False, float_format='%.6f')
             cropped_image.save(cropped_image_path)
 
 
@@ -157,7 +170,7 @@ if __name__ == "__main__":
                         help="Coordenada y de cima. Dafault: 1080")
     parser.add_argument("-bottom_y", type=int, default=1950,
                         help="Coordenada y de baixo. Dafault: 1950")
-    parser.add_argument("-input_path", default="./data/input_images/",
+    parser.add_argument("-input_path", required=True,
                         help="Caminho para as imagens")
     parser.add_argument("-output_path", default=None,
                         help="(Opcional) O caminho para as imagens cortadas")
@@ -165,10 +178,6 @@ if __name__ == "__main__":
                         help="Se definido como 1 (ou qualquer inteiro diferente de 0) e output_path nao for definido, as imagens serao substituidas. Dafault: 0")
 
     args = parser.parse_args()
-
-    if args.output_path:
-        if not os.path.exists(args.output_path):
-            os.makedirs(args.output_path)
 
     cut(args.left_x, args.top_y, args.right_x, args.bottom_y,
         args.input_path, args.output_path, args.replace != 0)
