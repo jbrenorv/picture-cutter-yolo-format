@@ -76,10 +76,6 @@ def cut(left_x, top_y, right_x, bottom_y, input_path, output_path=None, replace=
             shutil.copyfile(os.path.join(input_path, classes_file_name),
                             os.path.join(output_path, classes_file_name))
 
-    # if len(images_paths) != \
-    #         len([t for t in paths if t.endswith('.txt')]):
-    #     print("Quantidade de TXTs é diferente da quantidade de imagens.")
-    #     return
     images_paths = [os.path.join(input_path, i)
                     for i in paths
                     if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
