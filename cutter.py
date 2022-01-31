@@ -62,8 +62,13 @@ def cropped_image_rectangle_from_highway_region(highway_region: Rectangle, width
     y_min = max(0, y_min)
     y_max = y_min + height
 
-    if y_max < (original_image_size[1] - hood_approximate_height):
-        y_max = original_image_size[1] - hood_approximate_height
+    # se o corte estiver muito na parte de cima, esta errado, pois vai pegar so o ceu
+    # if y_max < (original_image_size[1] - hood_approximate_height):
+    #     y_max = original_image_size[1] - hood_approximate_height
+    #     y_min = y_max - height
+    if ((original_image_size[1] - hood_approximate_height) - y_max) > \
+            2 * hood_approximate_height:
+        y_max = original_image_size[1] - int(hood_approximate_height * 1.5)
         y_min = y_max - height
 
     return Rectangle(x_min, y_min, x_max, y_max)
@@ -151,8 +156,6 @@ def generate_txt(input_txt_path: str, output_txt_path: str, cropped_image_rectan
         return True
 
     print(f"(Aviso): Sem conteudo para {input_txt_path}")
-    print(cropped_image_rectangle)
-    print()
 
     return False
 
@@ -182,7 +185,7 @@ if __name__ == "__main__":
     suffix_output_files_text = ''
     output_path = args.input_path
     logs_path_created = False
-    logs_path = "./logs"
+    logs_path = "./logs"  # + os.path.basename(args.input_path)
 
     if args.output_path and args.output_path != args.input_path:
         output_path = args.output_path
@@ -200,8 +203,13 @@ if __name__ == "__main__":
     images_paths = [os.path.join(args.input_path, i)
                     for i in paths
                     if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
+    cnt = 1
+    total = len(images_paths)
 
     for image_path in images_paths:
+
+        print(f'{cnt}/{total}')
+        cnt += 1
 
         highway_region = find_highway_region(image_path)
 
