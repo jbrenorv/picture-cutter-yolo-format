@@ -5,7 +5,7 @@ import argparse
 import shutil
 import os
 
-from utils import Rectangle, find_highway_region
+from utils import Rectangle
 
 
 def get_txt_name(image_name):
@@ -46,30 +46,18 @@ def get_cropped_image_and_txt_path(image_path, output_path, suffix_text):
             os.path.join(output_path, cropped_txt_name),)
 
 
-def cropped_image_rectangle_from_highway_region(highway_region: Rectangle, width: int, height: int,
-                                                original_image_size):
+def get_cropped_image_rectangle(original_image_size, width=608, height=608):
     '''
-    Define a regiao de corte, dada a regiao da rodovia
+    Define a regiao de corte
     '''
 
-    hood_approximate_height = 240
-    x_min = max(0, highway_region.centre_x() - (width // 2))
-    x_max = x_min + width
-    y_min = \
-        highway_region.y_min \
-        if highway_region.height() >= height \
-        else highway_region.y_max - height
-    y_min = max(0, y_min)
-    y_max = y_min + height
+    # altura media do capo
+    hood_approximate_height = 200
 
-    # se o corte estiver muito na parte de cima, esta errado, pois vai pegar so o ceu
-    # if y_max < (original_image_size[1] - hood_approximate_height):
-    #     y_max = original_image_size[1] - hood_approximate_height
-    #     y_min = y_max - height
-    if ((original_image_size[1] - hood_approximate_height) - y_max) > \
-            2 * hood_approximate_height:
-        y_max = original_image_size[1] - int(hood_approximate_height * 1.5)
-        y_min = y_max - height
+    x_min = max(0, (original_image_size[0] // 2) - (width // 2))
+    x_max = min(original_image_size[0], x_min + width)
+    y_max = max(0, original_image_size[1] - hood_approximate_height)
+    y_min = max(0, y_max - height)
 
     return Rectangle(x_min, y_min, x_max, y_max)
 
@@ -168,10 +156,10 @@ def create_dir_if_not_exists(dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-width", type=int, default=2100,
-                        help="A largura das novas imagens. Dafault: 2100")
-    parser.add_argument("-height", type=int, default=800,
-                        help="A altura das novas imagens. Dafault: 800")
+    parser.add_argument("-width", type=int, default=608,
+                        help="A largura das novas imagens. Dafault: 608")
+    parser.add_argument("-height", type=int, default=608,
+                        help="A altura das novas imagens. Dafault: 608")
     parser.add_argument("-input_path", required=True,
                         help="Caminho para as imagens")
     parser.add_argument("-output_path", default=None,
@@ -185,7 +173,7 @@ if __name__ == "__main__":
     suffix_output_files_text = ''
     output_path = args.input_path
     logs_path_created = False
-    logs_path = "./logs"  # + os.path.basename(args.input_path)
+    logs_path = "./logs"
 
     if args.output_path and args.output_path != args.input_path:
         output_path = args.output_path
@@ -211,35 +199,28 @@ if __name__ == "__main__":
         print(f'{cnt}/{total}')
         cnt += 1
 
-        highway_region = find_highway_region(image_path)
+        image = Image.open(image_path)
 
-        if highway_region:
+        if args.width > image.size[0] or args.height > image.size[1]:
+            print('(Aviso): A largura e/ou largura solicitada(s)'
+                  f' excedem o tamanho da imagem {image_path}')
+            continue
 
-            image = Image.open(image_path)
-            if args.width > image.size[0] or args.height > image.size[1]:
-                print('(Aviso): A largura e/ou largura solicitada(s)'
-                      f' excedem o tamanho da imagem {image_path}')
-                continue
+        output_image_path, output_txt_path = get_cropped_image_and_txt_path(
+            image_path, output_path, suffix_output_files_text)
 
-            output_image_path, output_txt_path = get_cropped_image_and_txt_path(
-                image_path, output_path, suffix_output_files_text)
+        cropped_image_rectangle = get_cropped_image_rectangle(image.size)
 
-            cropped_image_rectangle = cropped_image_rectangle_from_highway_region(
-                highway_region, args.width, args.height, image.size)
+        input_txt_path = get_txt_path(image_path)
+        txt_saved = generate_txt(input_txt_path, output_txt_path,
+                                 cropped_image_rectangle, image.size)
 
-            input_txt_path = get_txt_path(image_path)
-            txt_saved = generate_txt(input_txt_path, output_txt_path,
-                                     cropped_image_rectangle, image.size)
-
-            if txt_saved:
-                cut(cropped_image_rectangle, image, output_image_path)
-            else:
-                if not logs_path_created:
-                    create_dir_if_not_exists(logs_path)
-                    logs_path_created = True
-
-                cut(cropped_image_rectangle, image,
-                    os.path.join(logs_path, os.path.basename(output_image_path)))
-
+        if txt_saved:
+            cut(cropped_image_rectangle, image, output_image_path)
         else:
-            print(f'(Aviso): Rodovia não identificada em {image_path}')
+            if not logs_path_created:
+                create_dir_if_not_exists(logs_path)
+                logs_path_created = True
+
+            cut(cropped_image_rectangle, image,
+                os.path.join(logs_path, os.path.basename(output_image_path)))

@@ -1,4 +1,3 @@
 pandas
 Pillow
 Shapely
-opencv-python
