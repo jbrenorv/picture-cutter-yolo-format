@@ -5,7 +5,7 @@ import argparse
 import shutil
 import os
 
-from utils import Rectangle
+from utils import Rectangle, progressBar, log
 
 
 def get_txt_name(image_name):
@@ -83,7 +83,7 @@ def generate_txt(input_txt_path: str, output_txt_path: str, cropped_image_rectan
         labels = pd.read_csv(input_txt_path, sep=' ',
                              names=['class', 'x', 'y', 'w', 'h'])
     except:
-        print(f"(Aviso): Nao foi possivel abrir {input_txt_path}")
+        log(f"(Aviso): Nao foi possivel abrir {input_txt_path}")
         return False
 
     original_image_width, original_image_height = original_image_size
@@ -143,7 +143,7 @@ def generate_txt(input_txt_path: str, output_txt_path: str, cropped_image_rectan
 
         return True
 
-    print(f"(Aviso): Sem conteudo para {input_txt_path}")
+    log(f"(Aviso): Sem conteudo para {output_txt_path}")
 
     return False
 
@@ -191,19 +191,14 @@ if __name__ == "__main__":
     images_paths = [os.path.join(args.input_path, i)
                     for i in paths
                     if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
-    cnt = 1
-    total = len(images_paths)
 
-    for image_path in images_paths:
-
-        print(f'{cnt}/{total}')
-        cnt += 1
+    for image_path in progressBar(images_paths, prefix='Progress:', suffix='Complete', length=50):
 
         image = Image.open(image_path)
 
         if args.width > image.size[0] or args.height > image.size[1]:
-            print('(Aviso): A largura e/ou largura solicitada(s)'
-                  f' excedem o tamanho da imagem {image_path}')
+            log('(Aviso): A largura e/ou largura solicitada(s)'
+                f' excedem o tamanho da imagem {image_path}')
             continue
 
         output_image_path, output_txt_path = get_cropped_image_and_txt_path(
