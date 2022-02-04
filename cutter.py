@@ -1,3 +1,4 @@
+from glob import glob
 from PIL import Image
 from shapely.geometry import Polygon
 import pandas as pd
@@ -26,24 +27,6 @@ def get_txt_path(image_path):
     image_name = os.path.basename(image_path)
     txt_name = get_txt_name(image_name)
     return os.path.join(os.path.dirname(image_path), txt_name)
-
-
-def get_cropped_image_and_txt_path(image_path, output_path, suffix_text):
-    '''
-    Retorna o caminho onde a imagem cortada e o txt serao salva
-    '''
-
-    image_name = os.path.basename(image_path)
-    txt_name = get_txt_name(image_name)
-    split_image_name = image_name.split('.')
-    split_txt_name = txt_name.split('.')
-    cropped_image_name = '.'.join(
-        split_image_name[:-1]) + suffix_text + '.' + split_image_name[-1]
-    cropped_txt_name = '.'.join(
-        split_txt_name[:-1]) + suffix_text + '.' + split_txt_name[-1]
-
-    return (os.path.join(output_path, cropped_image_name),
-            os.path.join(output_path, cropped_txt_name),)
 
 
 def get_cropped_image_rectangle(original_image_size, width=608, height=608):
@@ -143,8 +126,6 @@ def generate_txt(input_txt_path: str, output_txt_path: str, cropped_image_rectan
 
         return True
 
-    log(f"(Aviso): Sem conteudo para {output_txt_path}")
-
     return False
 
 
@@ -162,60 +143,69 @@ if __name__ == "__main__":
                         help="A altura das novas imagens. Dafault: 608")
     parser.add_argument("-input_path", required=True,
                         help="Caminho para as imagens")
-    parser.add_argument("-output_path", default=None,
-                        help="(Opcional) O caminho para as imagens cortadas")
-    parser.add_argument("-replace", type=int, default=0,
-                        help="Se definido como 1 (ou qualquer inteiro diferente de 0) e output_path nao for definido, as imagens serao substituidas. Dafault: 0")
 
     args = parser.parse_args()
 
-    paths = [f for f in os.listdir(args.input_path)]
-    suffix_output_files_text = ''
-    output_path = args.input_path
-    logs_path_created = False
-    logs_path = "./logs"
+    classes_file_name = "classes.txt"
+    ces_pattern_path = os.path.join(args.input_path, 'CE*')
+    ce_paths = glob(ces_pattern_path)
 
-    if args.output_path and args.output_path != args.input_path:
-        output_path = args.output_path
+    for ce_path in ce_paths:
 
-        create_dir_if_not_exists(args.output_path)
+        print(ce_path)
 
-        classes_file_name = "classes.txt"
+        input_path = os.path.join(ce_path, "rotuladas")
+        output_path = os.path.join(ce_path, "rotuladas_cortadas")
+
+        create_dir_if_not_exists(output_path)
+
+        paths = [f for f in os.listdir(input_path)]
+
         if classes_file_name in paths:
             paths.remove(classes_file_name)
-            shutil.copyfile(os.path.join(args.input_path, classes_file_name),
-                            os.path.join(args.output_path, classes_file_name))
-    elif args.replace != 0:
-        suffix_output_files_text = '_cropped'
+            shutil.copyfile(os.path.join(input_path, classes_file_name),
+                            os.path.join(output_path, classes_file_name))
 
-    images_paths = [os.path.join(args.input_path, i)
-                    for i in paths
-                    if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
+        images_paths = [os.path.join(input_path, i)
+                        for i in paths
+                        if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
 
-    for image_path in progressBar(images_paths, prefix='Progress:', suffix='Complete', length=50):
+        part = 0
+        images_per_part = 50
+        count = 0
+        total_saved = 0
 
-        image = Image.open(image_path)
+        for image_path in \
+                progressBar(images_paths, prefix='Progress:', suffix='Complete', length=50):
 
-        if args.width > image.size[0] or args.height > image.size[1]:
-            log('(Aviso): A largura e/ou largura solicitada(s)'
-                f' excedem o tamanho da imagem {image_path}')
-            continue
+            if count % images_per_part == 0:
+                part += 1
+                current_part_path = os.path.join(output_path, f"parte_{part}")
+                create_dir_if_not_exists(current_part_path)
 
-        output_image_path, output_txt_path = get_cropped_image_and_txt_path(
-            image_path, output_path, suffix_output_files_text)
+            image = Image.open(image_path)
 
-        cropped_image_rectangle = get_cropped_image_rectangle(image.size)
+            if args.width > image.size[0] or args.height > image.size[1]:
+                log('(Aviso): A largura e/ou largura solicitada(s)'
+                    f' excedem o tamanho da imagem {image_path}')
+                continue
 
-        input_txt_path = get_txt_path(image_path)
-        txt_saved = generate_txt(input_txt_path, output_txt_path,
-                                 cropped_image_rectangle, image.size)
+            output_image_path = os.path.join(
+                current_part_path, os.path.basename(image_path))
+            output_txt_path = os.path.join(
+                current_part_path, get_txt_name(os.path.basename(image_path)))
 
-        if txt_saved:
-            cut(cropped_image_rectangle, image, output_image_path)
-        else:
-            if not logs_path_created:
-                create_dir_if_not_exists(logs_path)
-                logs_path_created = True
+            cropped_image_rectangle = get_cropped_image_rectangle(image.size)
 
-            cut(cropped_image_rectangle, image,
-                os.path.join(logs_path, os.path.basename(output_image_path)))
+            input_txt_path = get_txt_path(image_path)
+            txt_saved = generate_txt(input_txt_path, output_txt_path,
+                                     cropped_image_rectangle, image.size)
+
+            if txt_saved:
+                cut(cropped_image_rectangle, image, output_image_path)
+                total_saved += 1
+
+            count += 1
+
+        print(f'Saved {total_saved} of {len(images_paths)} images')
+        print()
