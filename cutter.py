@@ -170,15 +170,18 @@ if __name__ == "__main__":
                         for i in paths
                         if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
 
-        part = 0
+        part = 1
         images_per_part = 50
         count = 0
         total_saved = 0
+        current_part_path = os.path.join(output_path, f"parte_{part}")
+        create_dir_if_not_exists(current_part_path)
 
         for image_path in \
-                progressBar(images_paths, prefix='Progress:', suffix='Complete', length=50):
+                progressBar(images_paths, prefix='Progress:', suffix='Complete', length=50, fill='#'):
 
-            if count % images_per_part == 0:
+            if count >= 50:
+                count = 0
                 part += 1
                 current_part_path = os.path.join(output_path, f"parte_{part}")
                 create_dir_if_not_exists(current_part_path)
@@ -186,7 +189,7 @@ if __name__ == "__main__":
             image = Image.open(image_path)
 
             if args.width > image.size[0] or args.height > image.size[1]:
-                log('(Aviso): A largura e/ou largura solicitada(s)'
+                log('(Aviso): A largura e/ou altura solicitada(s)'
                     f' excedem o tamanho da imagem {image_path}')
                 continue
 
@@ -204,8 +207,7 @@ if __name__ == "__main__":
             if txt_saved:
                 cut(cropped_image_rectangle, image, output_image_path)
                 total_saved += 1
-
-            count += 1
+                count += 1
 
         print(f'Saved {total_saved} of {len(images_paths)} images')
         print()
