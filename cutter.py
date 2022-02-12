@@ -1,3 +1,4 @@
+from glob import glob
 from PIL import Image
 from shapely.geometry import Polygon
 import pandas as pd
@@ -5,7 +6,7 @@ import argparse
 import shutil
 import os
 
-from utils import Rectangle, find_highway_region
+from utils import Rectangle, get_hood_approximate_height, log, progressBar
 
 
 def get_txt_name(image_name):
@@ -28,48 +29,18 @@ def get_txt_path(image_path):
     return os.path.join(os.path.dirname(image_path), txt_name)
 
 
-def get_cropped_image_and_txt_path(image_path, output_path, suffix_text):
+def get_cropped_image_rectangle(original_image_size, hood_approximate_height, width, height):
     '''
-    Retorna o caminho onde a imagem cortada e o txt serao salva
-    '''
-
-    image_name = os.path.basename(image_path)
-    txt_name = get_txt_name(image_name)
-    split_image_name = image_name.split('.')
-    split_txt_name = txt_name.split('.')
-    cropped_image_name = '.'.join(
-        split_image_name[:-1]) + suffix_text + '.' + split_image_name[-1]
-    cropped_txt_name = '.'.join(
-        split_txt_name[:-1]) + suffix_text + '.' + split_txt_name[-1]
-
-    return (os.path.join(output_path, cropped_image_name),
-            os.path.join(output_path, cropped_txt_name),)
-
-
-def cropped_image_rectangle_from_highway_region(highway_region: Rectangle, width: int, height: int,
-                                                original_image_size):
-    '''
-    Define a regiao de corte, dada a regiao da rodovia
+    Define a regiao de corte
     '''
 
-    hood_approximate_height = 240
-    x_min = max(0, highway_region.centre_x() - (width // 2))
-    x_max = x_min + width
-    y_min = \
-        highway_region.y_min \
-        if highway_region.height() >= height \
-        else highway_region.y_max - height
-    y_min = max(0, y_min)
-    y_max = y_min + height
+    # altura media do capo
+    # hood_approximate_height = 200
 
-    # se o corte estiver muito na parte de cima, esta errado, pois vai pegar so o ceu
-    # if y_max < (original_image_size[1] - hood_approximate_height):
-    #     y_max = original_image_size[1] - hood_approximate_height
-    #     y_min = y_max - height
-    if ((original_image_size[1] - hood_approximate_height) - y_max) > \
-            2 * hood_approximate_height:
-        y_max = original_image_size[1] - int(hood_approximate_height * 1.5)
-        y_min = y_max - height
+    x_min = max(0, (original_image_size[0] // 2) - (width // 2))
+    x_max = min(original_image_size[0], x_min + width)
+    y_max = max(0, original_image_size[1] - hood_approximate_height)
+    y_min = max(0, y_max - height)
 
     return Rectangle(x_min, y_min, x_max, y_max)
 
@@ -155,7 +126,7 @@ def generate_txt(input_txt_path: str, output_txt_path: str, cropped_image_rectan
 
         return True
 
-    print(f"(Aviso): Sem conteudo para {input_txt_path}")
+    # print(f"(Aviso): Sem conteudo para {input_txt_path}")
 
     return False
 
@@ -168,78 +139,88 @@ def create_dir_if_not_exists(dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-width", type=int, default=2100,
-                        help="A largura das novas imagens. Dafault: 2100")
-    parser.add_argument("-height", type=int, default=800,
-                        help="A altura das novas imagens. Dafault: 800")
+    parser.add_argument("-width", type=int, default=1500,
+                        help="A largura das novas imagens. Dafault: 1500")
+    parser.add_argument("-height", type=int, default=580,
+                        help="A altura das novas imagens. Dafault: 580")
     parser.add_argument("-input_path", required=True,
                         help="Caminho para as imagens")
-    parser.add_argument("-output_path", default=None,
-                        help="(Opcional) O caminho para as imagens cortadas")
-    parser.add_argument("-replace", type=int, default=0,
-                        help="Se definido como 1 (ou qualquer inteiro diferente de 0) e output_path nao for definido, as imagens serao substituidas. Dafault: 0")
 
     args = parser.parse_args()
 
-    paths = [f for f in os.listdir(args.input_path)]
-    suffix_output_files_text = ''
-    output_path = args.input_path
-    logs_path_created = False
-    logs_path = "./logs"  # + os.path.basename(args.input_path)
+    classes_file_name = "classes.txt"
+    ces_pattern_path = os.path.join(args.input_path, 'CE*')
+    ce_paths = glob(ces_pattern_path)
 
-    if args.output_path and args.output_path != args.input_path:
-        output_path = args.output_path
+    for ce_path in ce_paths:
 
-        create_dir_if_not_exists(args.output_path)
+        capos_pttrn = os.path.join(ce_path, "rotuladas/*")
+        capos = [os.path.basename(c) for c in glob(capos_pttrn)]
 
-        classes_file_name = "classes.txt"
-        if classes_file_name in paths:
-            paths.remove(classes_file_name)
-            shutil.copyfile(os.path.join(args.input_path, classes_file_name),
-                            os.path.join(args.output_path, classes_file_name))
-    elif args.replace != 0:
-        suffix_output_files_text = '_cropped'
+        if classes_file_name in capos:
+            capos.remove(classes_file_name)
+            shutil.copyfile(os.path.join(ce_path, f"rotuladas/{classes_file_name}"),
+                            os.path.join(ce_path, f"rotuladas_cortadas/{classes_file_name}"))
 
-    images_paths = [os.path.join(args.input_path, i)
-                    for i in paths
-                    if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
-    cnt = 1
-    total = len(images_paths)
+        part = 1
+        images_per_part = 50
+        count = 0
+        total_saved = 0
+        current_part_path = os.path.join(output_path, f"parte_{part}")
+        create_dir_if_not_exists(current_part_path)
 
-    for image_path in images_paths:
+        output_path = os.path.join(ce_path, "rotuladas_cortadas")
+        create_dir_if_not_exists(output_path)
 
-        print(f'{cnt}/{total}')
-        cnt += 1
+        for capo in capos:
 
-        highway_region = find_highway_region(image_path)
+            input_path = os.path.join(ce_path, f"rotuladas/{capo}")
+            print(input_path)
 
-        if highway_region:
-
-            image = Image.open(image_path)
-            if args.width > image.size[0] or args.height > image.size[1]:
-                print('(Aviso): A largura e/ou largura solicitada(s)'
-                      f' excedem o tamanho da imagem {image_path}')
+            try:
+                paths = [f for f in os.listdir(input_path)]
+            except FileNotFoundError:
+                print(f'(Aviso): No such file or directory: {input_path}')
                 continue
 
-            output_image_path, output_txt_path = get_cropped_image_and_txt_path(
-                image_path, output_path, suffix_output_files_text)
+            images_paths = [os.path.join(input_path, i)
+                            for i in paths
+                            if i.endswith(('.JPG', '.jpg', '.jpeg', '.JPEG', '.png',))]
 
-            cropped_image_rectangle = cropped_image_rectangle_from_highway_region(
-                highway_region, args.width, args.height, image.size)
+            for image_path in \
+                    progressBar(images_paths, prefix='Progress:', suffix='Complete', length=50, fill='#'):
 
-            input_txt_path = get_txt_path(image_path)
-            txt_saved = generate_txt(input_txt_path, output_txt_path,
-                                     cropped_image_rectangle, image.size)
+                if count >= 50:
+                    count = 0
+                    part += 1
+                    current_part_path = os.path.join(
+                        output_path, f"parte_{part}")
+                    create_dir_if_not_exists(current_part_path)
 
-            if txt_saved:
-                cut(cropped_image_rectangle, image, output_image_path)
-            else:
-                if not logs_path_created:
-                    create_dir_if_not_exists(logs_path)
-                    logs_path_created = True
+                image = Image.open(image_path)
+                hood_approximate_height = image.size[1] - int(capo)
 
-                cut(cropped_image_rectangle, image,
-                    os.path.join(logs_path, os.path.basename(output_image_path)))
+                if args.width > image.size[0] or args.height > image.size[1]:
+                    log('(Aviso): A largura e/ou largura solicitada(s)'
+                        f' excedem o tamanho da imagem {image_path}')
+                    continue
 
-        else:
-            print(f'(Aviso): Rodovia não identificada em {image_path}')
+                output_image_path = os.path.join(
+                    current_part_path, os.path.basename(image_path))
+                output_txt_path = os.path.join(
+                    current_part_path, get_txt_name(os.path.basename(image_path)))
+
+                cropped_image_rectangle = get_cropped_image_rectangle(
+                    image.size, hood_approximate_height, args.width, args.height)
+
+                input_txt_path = get_txt_path(image_path)
+                txt_saved = generate_txt(input_txt_path, output_txt_path,
+                                         cropped_image_rectangle, image.size)
+
+                if txt_saved:
+                    cut(cropped_image_rectangle, image, output_image_path)
+                    total_saved += 1
+                    count += 1
+
+            print(f'Saved {total_saved} of {len(images_paths)} images')
+            print()
